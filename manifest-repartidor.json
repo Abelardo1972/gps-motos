@@ -1,0 +1,16 @@
+{
+  "short_name": "DriveApp",
+  "name": "DriveApp Repartidor",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/3198/3198336.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": "/cliente.html",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "display": "standalone",
+  "orientation": "portrait"
+}
