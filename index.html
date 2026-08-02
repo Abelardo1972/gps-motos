@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Repartidor - Panel de Control</title>
+  <title>Repartidor - Alertas de Pedidos</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Arial, sans-serif; }
@@ -13,46 +13,76 @@
       background: #1e1e1e; padding: 12px 16px; display: flex;
       justify-content: space-between; align-items: center; border-bottom: 1px solid #333;
     }
-    .stat { text-align: center; }
     .stat-title { font-size: 0.7rem; color: #888; text-transform: uppercase; }
     .stat-val { font-size: 0.95rem; font-weight: bold; color: #00ff88; }
 
     #map { flex: 1; width: 100%; }
 
-    /* Panel Flotante de Acciones */
-    #action-panel {
-      background: #1e1e1e; padding: 16px; border-top: 1px solid #333;
-      display: flex; flex-direction: column; gap: 10px;
+    /* TARJETA POPUP / ALERTA DE NUEVO PEDIDO */
+    #order-alert-card {
+      position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+      width: 90%; max-width: 380px; background: #1e1e1e; border: 2px solid #00ff88;
+      border-radius: 14px; padding: 18px; box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+      z-index: 2000; display: none; animation: popUp 0.3s ease-out;
     }
 
+    @keyframes popUp {
+      from { transform: translate(-50%, 50px); opacity: 0; }
+      to { transform: translate(-50%, 0); opacity: 1; }
+    }
+
+    .alert-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+    .alert-price { font-size: 1.6rem; font-weight: bold; color: #00ff88; }
+    .alert-dist { font-size: 0.85rem; color: #aaa; }
+
+    .btn-group { display: flex; gap: 10px; margin-top: 14px; }
     .btn-action {
-      width: 100%; padding: 14px; border: none; border-radius: 8px;
-      font-size: 1rem; font-weight: bold; cursor: pointer; text-align: center;
-      transition: background 0.2s;
+      flex: 1; padding: 12px; border: none; border-radius: 8px;
+      font-weight: bold; font-size: 0.95rem; cursor: pointer;
     }
+    .btn-accept { background: #00ff88; color: #000; }
+    .btn-reject { background: #333; color: #ff4444; border: 1px solid #ff4444; }
 
-    .btn-accept { background: #28a745; color: #fff; }
-    .btn-pickup { background: #ffc107; color: #000; display: none; }
+    /* BOTONES DE ESTADO POST-ACEPTACIÓN */
+    #status-controls {
+      background: #1e1e1e; padding: 14px; border-top: 1px solid #333; display: none;
+    }
+    .btn-status {
+      width: 100%; padding: 14px; border: none; border-radius: 8px;
+      font-size: 1rem; font-weight: bold; cursor: pointer;
+    }
+    .btn-pickup { background: #ffc107; color: #000; }
     .btn-deliver { background: #17a2b8; color: #fff; display: none; }
-    .btn-finish { background: #dc3545; color: #fff; display: none; }
   </style>
 </head>
 <body>
 
   <div id="top-bar">
-    <div class="stat"><div class="stat-title">Estado GPS</div><div id="status-gps" class="stat-val" style="color:#ffaa00;">Inactivo</div></div>
-    <div class="stat"><div class="stat-title">Precisión</div><div id="accuracy" class="stat-val">-- m</div></div>
-    <div class="stat"><div class="stat-title">Velocidad</div><div id="speed" class="stat-val">0 km/h</div></div>
+    <div><div class="stat-title">Estado GPS</div><div id="status-gps" class="stat-val">En línea</div></div>
+    <div><div class="stat-title">Velocidad</div><div id="speed" class="stat-val">0 km/h</div></div>
   </div>
 
   <div id="map"></div>
 
-  <!-- Botones de Control de Estado -->
-  <div id="action-panel">
-    <button id="btn-accept" class="btn-action btn-accept" onclick="aceptarPedido()">1. Aceptar Pedido</button>
-    <button id="btn-pickup" class="btn-action btn-pickup" onclick="marcarRecogido()">2. Confirmar Paquete Recogido</button>
-    <button id="btn-deliver" class="btn-action btn-deliver" onclick="confirmarEntrega()">3. Confirmar Entrega Final</button>
-    <button id="btn-finish" class="btn-action btn-finish" onclick="reiniciarCarrera()">Finalizar y Volver a Iniciar</button>
+  <!-- TARJETA FLOTANTE DE ALERTA -->
+  <div id="order-alert-card">
+    <div class="alert-header">
+      <span style="font-size: 0.8rem; background: #333; padding: 4px 8px; border-radius: 4px; color: #00ff88;">⚡ ¡NUEVO PEDIDO!</span>
+      <span id="alert-dist" class="alert-dist">3.2 km</span>
+    </div>
+    <div id="alert-price" class="alert-price">$0.00</div>
+    <div style="font-size: 0.8rem; color: #ccc; margin-top: 6px;">📍 Cliente esperando confirmación</div>
+
+    <div class="btn-group">
+      <button class="btn-action btn-reject" onclick="rechazarPedido()">Rechazar</button>
+      <button class="btn-action btn-accept" onclick="aceptarPedido()">Aceptar Carrera</button>
+    </div>
+  </div>
+
+  <!-- PANEL DE ESTADOS UNA VEZ ACEPTADO -->
+  <div id="status-controls">
+    <button id="btn-pickup" class="btn-status btn-pickup" onclick="marcarRecogido()">2. Confirmar Paquete Recogido</button>
+    <button id="btn-deliver" class="btn-status btn-deliver" onclick="confirmarEntrega()">3. Confirmar Entrega Final</button>
   </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -60,9 +90,9 @@
 
   <script>
     const URL_SERVIDOR = "https://render-tw5p.onrender.com";
-    const socket = io(URL_SERVIDOR, { autoConnect: false });
+    const socket = io(URL_SERVIDOR);
 
-    let map = L.map('map').setView([0, 0], 2);
+    let map = L.map('map').setView([-17.7833, -63.1821], 14);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
 
     const motoIcon = L.icon({
@@ -70,81 +100,61 @@
       iconSize: [38, 38], iconAnchor: [19, 19]
     });
 
-    let motoMarker = null;
-    let watchId = null;
+    let motoMarker = null, watchId = null;
 
-    // --- LÓGICA DE ESTADOS Y BOTONES ---
+    // Conectar GPS en segundo plano al entrar
+    if ("geolocation" in navigator) {
+      watchId = navigator.geolocation.watchPosition(onGPSSuccess, null, { enableHighAccuracy: true });
+    }
+
+    function onGPSSuccess(pos) {
+      const lat = pos.coords.latitude, lng = pos.coords.longitude;
+      const speed = pos.coords.speed ? (pos.coords.speed * 3.6).toFixed(1) : 0;
+      
+      document.getElementById("speed").innerText = `${speed} km/h`;
+
+      if (!motoMarker) {
+        motoMarker = L.marker([lat, lng], { icon: motoIcon }).addTo(map);
+        map.setView([lat, lng], 15);
+      } else {
+        motoMarker.setLatLng([lat, lng]);
+      }
+
+      if (socket.connected) {
+        socket.emit('ubicacion_moto', { motoId: "MOTO-01", lat, lng, speed, accuracy: pos.coords.accuracy });
+      }
+    }
+
+    // --- ESCUCHAR ALERTA DE NUEVO PEDIDO ---
+    socket.on('nuevo_pedido_disponible', (data) => {
+      document.getElementById('alert-price').innerText = data.precio;
+      document.getElementById('alert-dist').innerText = data.distancia;
+      document.getElementById('order-alert-card').style.display = 'block';
+    });
+
+    function rechazarPedido() {
+      document.getElementById('order-alert-card').style.display = 'none';
+    }
 
     function aceptarPedido() {
-      socket.connect();
-      startGPS();
-      
-      // Notificar al servidor
-      socket.emit('cambiar_estado', { estado: 'ACEPTADO', motoId: 'MOTO-01' });
+      document.getElementById('order-alert-card').style.display = 'none';
+      document.getElementById('status-controls').style.display = 'block';
 
-      // Cambiar botones visuales
-      document.getElementById('btn-accept').style.display = 'none';
-      document.getElementById('btn-pickup').style.display = 'block';
+      // Notificar al servidor que se aceptó la carrera
+      socket.emit('cambiar_estado', { estado: 'ACEPTADO', motoId: 'MOTO-01' });
     }
 
     function marcarRecogido() {
       socket.emit('cambiar_estado', { estado: 'RECOGIDO', motoId: 'MOTO-01' });
-
       document.getElementById('btn-pickup').style.display = 'none';
       document.getElementById('btn-deliver').style.display = 'block';
     }
 
     function confirmarEntrega() {
       socket.emit('cambiar_estado', { estado: 'ENTREGADO', motoId: 'MOTO-01' });
-      stopGPS();
-
+      document.getElementById('status-controls').style.display = 'none';
+      document.getElementById('btn-pickup').style.display = 'block';
       document.getElementById('btn-deliver').style.display = 'none';
-      document.getElementById('btn-finish').style.display = 'block';
-    }
-
-    function reiniciarCarrera() {
-      document.getElementById('btn-finish').style.display = 'none';
-      document.getElementById('btn-accept').style.display = 'block';
-      document.getElementById('status-gps').innerText = "Inactivo";
-      document.getElementById('status-gps').style.color = "#ffaa00";
-    }
-
-    // --- LÓGICA GPS ---
-
-    function startGPS() {
-      if (!("geolocation" in navigator)) return alert("GPS no disponible.");
-      
-      const options = { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 };
-      watchId = navigator.geolocation.watchPosition(onGPSSuccess, null, options);
-    }
-
-    function stopGPS() {
-      if (watchId !== null) navigator.geolocation.clearWatch(watchId);
-    }
-
-    function onGPSSuccess(position) {
-      const lat = position.coords.latitude;
-      const lng = position.coords.longitude;
-      const accuracy = position.coords.accuracy;
-      const speed = position.coords.speed ? (position.coords.speed * 3.6).toFixed(1) : 0;
-      const latLng = [lat, lng];
-
-      document.getElementById("status-gps").innerText = "Transmitiendo";
-      document.getElementById("status-gps").style.color = "#00ff88";
-      document.getElementById("accuracy").innerText = `±${Math.round(accuracy)}m`;
-      document.getElementById("speed").innerText = `${speed} km/h`;
-
-      if (!motoMarker) {
-        motoMarker = L.marker(latLng, { icon: motoIcon }).addTo(map);
-        map.setView(latLng, 17);
-      } else {
-        motoMarker.setLatLng(latLng);
-        map.panTo(latLng);
-      }
-
-      if (socket.connected) {
-        socket.emit('ubicacion_moto', { motoId: "MOTO-01", lat, lng, speed, accuracy });
-      }
     }
   </script>
 </body>
