@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tracking GPS Real - Moto</title>
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: Arial, sans-serif;
+    }
+
+    body {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    #info-panel {
+      background: #111;
+      color: #fff;
+      padding: 15px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      z-index: 1000;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    }
+
+    .stat-box {
+      text-align: center;
+    }
+
+    .stat-label {
+      font-size: 0.75rem;
+      color: #aaa;
+      text-transform: uppercase;
+    }
+
+    .stat-value {
+      font-size: 1rem;
+      font-weight: bold;
+      color: #00ff88;
+    }
+
+    #btn-gps {
+      background: #ffcc00;
+      color: #000;
+      border: none;
+      padding: 10px 16px;
+      border-radius: 6px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    #map {
+      flex: 1;
+      width: 100%;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Panel Superior de Diagnóstico GPS -->
+  <div id="info-panel">
+    <div class="stat-box">
+      <div class="stat-label">Estado</div>
+      <div id="status" class="stat-value" style="color: #ffaa00;">Inactivo</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-label">Precisión</div>
+      <div id="accuracy" class="stat-value">-- m</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-label">Velocidad</div>
+      <div id="speed" class="stat-value">0 km/h</div>
+    </div>
+    <button id="btn-gps" onclick="toggleGPS()">Activar GPS</button>
+  </div>
+
+  <!-- Contenedor del Mapa -->
+  <div id="map"></div>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <script>
+    // Variables globales
+    let map;
+    let motoMarker;
+    let accuracyCircle;
+    let watchId = null;
+    let isTracking = false;
+
+    // Inicializar mapa centrado en una vista general
+    map = L.map('map').setView([0, 0], 2);
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '© OpenStreetMap'
+    }).addTo(map);
+
+    // Icono personalizado de la moto
+    const motoIcon = L.icon({
+      iconUrl: 'https://cdn-icons-png.flaticon.com/512/3198/3198348.png',
+      iconSize: [38, 38],
+      iconAnchor: [19, 19]
+    });
+
+    function toggleGPS() {
+      if (!isTracking) {
+        startGPS();
+      } else {
+        stopGPS();
+      }
+    }
+
+    function startGPS() {
+      if (!("geolocation" in navigator)) {
+        alert("Tu navegador no soporta geolocalización GPS.");
+        return;
+      }
+
+      document.getElementById("status").innerText = "Buscando...";
+      document.getElementById("status").style.color = "#ffaa00";
+
+      // Configuración de Alta Precisión para GPS de Moto
+      const options = {
+        enableHighAccuracy: true, // Fuerza uso del chip GPS
+        maximumAge: 0,           // No usar coordenadas en caché
+        timeout: 10000           // Tiempo máximo de espera
+      };
+
+      // Iniciar escucha continua
+      watchId = navigator.geolocation.watchPosition(onGPSSuccess, onGPSError, options);
+      
+      isTracking = true;
+      document.getElementById("btn-gps").innerText = "Detener GPS";
+      document.getElementById("btn-gps").style.background = "#ff4444";
+      document.getElementById("btn-gps").style.color = "#fff";
+    }
+
+    function stopGPS() {
+      if (watchId !== null) {
+        navigator.geolocation.clearWatch(watchId);
+        watchId = null;
+      }
+      isTracking = false;
+      document.getElementById("status").innerText = "Detenido";
+      document.getElementById("status").style.color = "#888";
+      document.getElementById("btn-gps").innerText = "Activar GPS";
+      document.getElementById("btn-gps").style.background = "#ffcc00";
+      document.getElementById("btn-gps").style.color = "#000";
+    }
+
+    function onGPSSuccess(position) {
+      const lat = position.coords.latitude;
+      const lng = position.coords.longitude;
+      const accuracy = position.coords.accuracy; // Precisión en metros
+      const speed = position.coords.speed ? (position.coords.speed * 3.6).toFixed(1) : 0; // m/s a km/h
+
+      const latLng = [lat, lng];
+
+      // Actualizar UI
+      document.getElementById("status").innerText = "Conectado";
+      document.getElementById("status").style.color = "#00ff88";
+      document.getElementById("accuracy").innerText = `±${Math.round(accuracy)}m`;
+      document.getElementById("speed").innerText = `${speed} km/h`;
+
+      // Si es la primera coordenada, centramos el mapa con zoom cercano
+      if (!motoMarker) {
+        motoMarker = L.marker(latLng, { icon: motoIcon }).addTo(map);
+        accuracyCircle = L.circle(latLng, { radius: accuracy, color: '#007bff', opacity: 0.3 }).addTo(map);
+        map.setView(latLng, 17);
+      } else {
+        // Actualizamos posición de la moto y del círculo de precisión
+        motoMarker.setLatLng(latLng);
+        accuracyCircle.setLatLng(latLng);
+        accuracyCircle.setRadius(accuracy);
+        
+        // Mantener la cámara centrada en la moto
+        map.panTo(latLng);
+      }
+    }
+
+    function onGPSError(error) {
+      console.error("Error GPS:", error);
+      document.getElementById("status").innerText = "Error GPS";
+      document.getElementById("status").style.color = "#ff4444";
+      
+      switch(error.code) {
+        case error.PERMISSION_DENIED:
+          alert("Permiso de ubicación denegado por el usuario.");
+          break;
+        case error.POSITION_UNAVAILABLE:
+          alert("La información de ubicación no está disponible.");
+          break;
+        case error.TIMEOUT:
+          alert("Se agotó el tiempo para obtener la ubicación.");
+          break;
+      }
+      stopGPS();
+    }
+  </script>
+</body>
+</html>
