@@ -3,159 +3,155 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Cliente - Tracking de Envíos en Tiempo Real</title>
+  <title>Cliente - Cotizador de Envíos en Moto</title>
 
   <!-- Leaflet CSS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
   <style>
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+    body { display: flex; flex-direction: column; height: 100vh; background: #f4f6f8; }
 
-    body {
-      display: flex;
-      flex-direction: column;
-      height: 100vh;
-      background-color: #f4f6f8;
-    }
-
-    /* Card Flotante Superior */
-    #status-card {
+    /* Panel Flotante de Cotización */
+    #calculator-card {
       position: absolute;
       top: 15px;
       left: 50%;
       transform: translateX(-50%);
       width: 90%;
-      max-width: 400px;
+      max-width: 420px;
       background: rgba(255, 255, 255, 0.95);
-      backdrop-filter: blur(5px);
-      padding: 15px;
+      backdrop-filter: blur(8px);
+      padding: 16px;
       border-radius: 12px;
-      box-shadow: 0 4px 15px rgba(0,0,0,0.15);
+      box-shadow: 0 4px 20px rgba(0,0,0,0.15);
       z-index: 1000;
+    }
+
+    .instructions { font-size: 0.85rem; color: #555; margin-bottom: 10px; }
+
+    .price-container {
       display: flex;
+      justify-content: space-between;
       align-items: center;
-      gap: 12px;
+      background: #111;
+      color: #fff;
+      padding: 12px 16px;
+      border-radius: 8px;
+      margin-top: 10px;
     }
 
-    .status-icon {
-      font-size: 2rem;
-    }
+    .price-value { font-size: 1.4rem; font-weight: bold; color: #00ff88; }
+    .btn-reset { background: #ff4444; color: #fff; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 0.8rem; }
 
-    .status-info h3 {
-      font-size: 1rem;
-      color: #1a1a1a;
-      margin-bottom: 2px;
-    }
-
-    .status-info p {
-      font-size: 0.85rem;
-      color: #666;
-    }
-
-    .badge {
-      display: inline-block;
-      margin-top: 4px;
-      padding: 2px 8px;
-      background: #e3f2fd;
-      color: #1976d2;
-      border-radius: 10px;
-      font-size: 0.75rem;
-      font-weight: bold;
-    }
-
-    #map {
-      flex: 1;
-      width: 100%;
-    }
+    #map { flex: 1; width: 100%; }
   </style>
 </head>
 <body>
 
-  <!-- Card de Estado sobre el Mapa -->
-  <div id="status-card">
-    <div class="status-icon">🛵</div>
-    <div class="status-info">
-      <h3>Tu repartidor está en camino</h3>
-      <p id="details">Buscando señal del GPS...</p>
-      <span id="speed-badge" class="badge">Velocidad: 0 km/h</span>
+  <!-- Panel de Cotización -->
+  <div id="calculator-card">
+    <div id="step-text" class="instructions">📌 Haz clic en el mapa para fijar el <b>Origen (Punto A)</b>.</div>
+    
+    <div class="price-container">
+      <div>
+        <div style="font-size: 0.75rem; color: #aaa;">TARIFA ESTIMADA</div>
+        <div id="price" class="price-value">$0.00</div>
+      </div>
+      <div>
+        <div id="distance-info" style="font-size: 0.8rem; text-align: right; color: #ccc;">0 km / 0 min</div>
+        <button class="btn-reset" onclick="reiniciarPuntos()">Reiniciar Puntos</button>
+      </div>
     </div>
   </div>
 
-  <!-- Contenedor del Mapa -->
   <div id="map"></div>
 
   <!-- Leaflet JS -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-  <!-- Socket.io -->
-  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-
   <script>
-    // -------------------------------------------------------------
-    // REEMPLAZA ESTA URL CON TU ENLACE DE RENDER
-    // -------------------------------------------------------------
-    const URL_SERVIDOR = "https://render-tw5p.onrender.com";
+    // Configuración de Tarifas Moto
+    const TARIFA_BASE = 1.50;  // Precio inicial fijo
+    const PRECIO_KM = 0.50;    // Precio por kilómetro recorrido
+    const PRECIO_MIN = 0.10;   // Precio por minuto estimado
 
-    // 1. Inicializar Mapa
-    const map = L.map('map').setView([0, 0], 2);
+    let map = L.map('map').setView([-17.7833, -63.1821], 14); // Cambia las coordenadas a tu ciudad
 
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
       attribution: '© OpenStreetMap'
     }).addTo(map);
 
-    // Icono personalizado para la Moto en el Mapa del Cliente
-    const motoIcon = L.icon({
-      iconUrl: 'https://cdn-icons-png.flaticon.com/512/3198/3198348.png',
-      iconSize: [42, 42],
-      iconAnchor: [21, 21],
-      popupAnchor: [0, -20]
-    });
+    let puntoA = null;
+    let puntoB = null;
+    let markerA = null;
+    let markerB = null;
+    let routePolyline = null;
 
-    let motoMarker = null;
-
-    // 2. Conectar al Servidor WebSocket
-    const socket = io(URL_SERVIDOR);
-
-    socket.on("connect", () => {
-      console.log("🟢 Cliente conectado al servidor de tracking:", socket.id);
-      document.getElementById('details').innerText = "Conectado. Esperando que el repartidor inicie el viaje.";
-    });
-
-    socket.on("disconnect", () => {
-      console.log("🔴 Desconectado del servidor");
-      document.getElementById('details').innerText = "Conexión perdida con el servidor.";
-    });
-
-    // 3. RECIBIR LA POSICIÓN EN TIEMPO REAL TRANSMITIDA DESDE EL REPARTIDOR
-    socket.on('actualizar_posicion_cliente', (data) => {
-      /*
-        Recibe 'data': { lat, lng, speed, accuracy, motoId }
-      */
-      const latLng = [data.lat, data.lng];
-
-      // Actualizar información en pantalla
-      document.getElementById('details').innerText = `Ubicación actualizada en vivo (Precisión: ±${Math.round(data.accuracy)}m)`;
-      document.getElementById('speed-badge').innerText = `Velocidad: ${data.speed} km/h`;
-
-      // Crear o mover el marcador sobre el mapa
-      if (!motoMarker) {
-        motoMarker = L.marker(latLng, { icon: motoIcon }).addTo(map)
-          .bindPopup(`<b>Repartidor (${data.motoId})</b><br>En camino con tu pedido`).openPopup();
+    // Escuchar clics en el mapa
+    map.on('click', function(e) {
+      if (!puntoA) {
+        // Fijar Origen (Punto A)
+        puntoA = e.latlng;
+        markerA = L.marker(puntoA, { draggable: true }).addTo(map)
+          .bindPopup("<b>Origen (Recogida)</b>").openPopup();
+        document.getElementById('step-text').innerHTML = "🏁 Ahora haz clic para fijar el <b>Destino (Punto B)</b>.";
+      } else if (!puntoB) {
+        // Fijar Destino (Punto B)
+        puntoB = e.latlng;
+        markerB = L.marker(puntoB, { draggable: true }).addTo(map)
+          .bindPopup("<b>Destino (Entrega)</b>").openPopup();
+        document.getElementById('step-text').innerHTML = "✅ Ruta calculada. Puedes arrastrar los puntos para ajustar.";
         
-        // Centrar mapa con zoom adecuado
-        map.setView(latLng, 17);
-      } else {
-        // Mover marcador de la moto suavemente a las nuevas coordenadas
-        motoMarker.setLatLng(latLng);
-        map.panTo(latLng);
+        // Calcular la ruta real en calles
+        calcularRutaYTarifa();
       }
     });
+
+    async function calcularRutaYTarifa() {
+      if (!puntoA || !puntoB) return;
+
+      // API Gratuita de Enrutamiento OSRM
+      const url = `https://router.project-osrm.org/route/v1/driving/${puntoA.lng},${puntoA.lat};${puntoB.lng},${puntoB.lat}?overview=full&geometries=geojson`;
+
+      try {
+        const response = await fetch(url);
+        const data = await response.json();
+
+        if (data.routes && data.routes.length > 0) {
+          const route = data.routes[0];
+          const distanciaKm = (route.distance / 1000).toFixed(2); // Metros a KM
+          const tiempoMin = Math.round(route.duration / 60);       // Segundos a Minutos
+
+          // Dibujar línea de ruta en el mapa
+          if (routePolyline) map.removeLayer(routePolyline);
+          const coordinates = route.geometry.coordinates.map(coord => [coord[1], coord[0]]);
+          routePolyline = L.polyline(coordinates, { color: '#007bff', weight: 5, opacity: 0.8 }).addTo(map);
+          map.fitBounds(routePolyline.getBounds(), { padding: [50, 50] });
+
+          // Aplicar Fórmula de Precio
+          const costoTotal = TARIFA_BASE + (distanciaKm * PRECIO_KM) + (tiempoMin * PRECIO_MIN);
+
+          // Actualizar Interfaz
+          document.getElementById('price').innerText = `$${costoTotal.toFixed(2)}`;
+          document.getElementById('distance-info').innerText = `${distanciaKm} km / ~${tiempoMin} min`;
+        }
+      } catch (error) {
+        console.error("Error al calcular la ruta:", error);
+      }
+    }
+
+    function reiniciarPuntos() {
+      if (markerA) map.removeLayer(markerA);
+      if (markerB) map.removeLayer(markerB);
+      if (routePolyline) map.removeLayer(routePolyline);
+      puntoA = null;
+      puntoB = null;
+      document.getElementById('price').innerText = "$0.00";
+      document.getElementById('distance-info').innerText = "0 km / 0 min";
+      document.getElementById('step-text').innerHTML = "📌 Haz clic en el mapa para fijar el <b>Origen (Punto A)</b>.";
+    }
   </script>
 </body>
 </html>
