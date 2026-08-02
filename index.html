@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Tracking GPS Real - Moto</title>
+  <title>Repartidor - Tracking GPS en Tiempo Real</title>
 
   <!-- Leaflet CSS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -67,7 +67,7 @@
 </head>
 <body>
 
-  <!-- Panel Superior de Diagnóstico GPS -->
+  <!-- Panel Superior de Diagnóstico y Conexión -->
   <div id="info-panel">
     <div class="stat-box">
       <div class="stat-label">Estado</div>
@@ -81,16 +81,41 @@
       <div class="stat-label">Velocidad</div>
       <div id="speed" class="stat-value">0 km/h</div>
     </div>
-    <button id="btn-gps" onclick="toggleGPS()">Activar GPS</button>
+    <button id="btn-gps" onclick="toggleGPS()">Iniciar Carrera</button>
   </div>
 
   <!-- Contenedor del Mapa -->
   <div id="map"></div>
 
-  <!-- Leaflet JS -->
+  <!-- Leaflet JS (Mapas) -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  
+  <!-- Socket.io (Conexión WebSockets en tiempo real) -->
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 
   <script>
+    // -------------------------------------------------------------
+    // 1. CONFIGURACIÓN DEL SERVIDOR
+    // Reemplaza esta URL con el dominio real de tu servidor Node.js
+    // -------------------------------------------------------------
+    const URL_SERVIDOR = "https://render-tw5p.onrender.com"; 
+
+    // Inicialización del Socket
+    const socket = io(URL_SERVIDOR, {
+      autoConnect: false // Solo conectamos cuando el repartidor presione 'Iniciar'
+    });
+
+    // Control de eventos de conexión del Socket
+    socket.on("connect", () => {
+      console.log("🟢 Conectado exitosamente al servidor de tracking:", socket.id);
+    });
+
+    socket.on("connect_error", (err) => {
+      console.error("🔴 Error de conexión con el servidor:", err.message);
+      document.getElementById("status").innerText = "Error Servidor";
+      document.getElementById("status").style.color = "#ff4444";
+    });
+
     // Variables globales
     let map;
     let motoMarker;
@@ -98,7 +123,7 @@
     let watchId = null;
     let isTracking = false;
 
-    // Inicializar mapa centrado en una vista general
+    // Inicializar mapa centrado en vista general
     map = L.map('map').setView([0, 0], 2);
 
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -106,7 +131,7 @@
       attribution: '© OpenStreetMap'
     }).addTo(map);
 
-    // Icono personalizado de la moto
+    // Icono personalizado para la Moto
     const motoIcon = L.icon({
       iconUrl: 'https://cdn-icons-png.flaticon.com/512/3198/3198348.png',
       iconSize: [38, 38],
@@ -127,21 +152,24 @@
         return;
       }
 
-      document.getElementById("status").innerText = "Buscando...";
+      // Conectar al servidor Socket.io
+      socket.connect();
+
+      document.getElementById("status").innerText = "Buscando GPS...";
       document.getElementById("status").style.color = "#ffaa00";
 
       // Configuración de Alta Precisión para GPS de Moto
       const options = {
-        enableHighAccuracy: true, // Fuerza uso del chip GPS
+        enableHighAccuracy: true, // Captura desde el chip GPS integrado
         maximumAge: 0,           // No usar coordenadas en caché
-        timeout: 10000           // Tiempo máximo de espera
+        timeout: 10000           // Límite de tiempo por lectura
       };
 
-      // Iniciar escucha continua
+      // Iniciar escucha continua de movimiento
       watchId = navigator.geolocation.watchPosition(onGPSSuccess, onGPSError, options);
       
       isTracking = true;
-      document.getElementById("btn-gps").innerText = "Detener GPS";
+      document.getElementById("btn-gps").innerText = "Detener Carrera";
       document.getElementById("btn-gps").style.background = "#ff4444";
       document.getElementById("btn-gps").style.color = "#fff";
     }
@@ -151,10 +179,16 @@
         navigator.geolocation.clearWatch(watchId);
         watchId = null;
       }
+
+      // Desconectar Socket al finalizar el viaje
+      if (socket.connected) {
+        socket.disconnect();
+      }
+
       isTracking = false;
       document.getElementById("status").innerText = "Detenido";
       document.getElementById("status").style.color = "#888";
-      document.getElementById("btn-gps").innerText = "Activar GPS";
+      document.getElementById("btn-gps").innerText = "Iniciar Carrera";
       document.getElementById("btn-gps").style.background = "#ffcc00";
       document.getElementById("btn-gps").style.color = "#000";
     }
@@ -162,30 +196,39 @@
     function onGPSSuccess(position) {
       const lat = position.coords.latitude;
       const lng = position.coords.longitude;
-      const accuracy = position.coords.accuracy; // Precisión en metros
+      const accuracy = position.coords.accuracy;
       const speed = position.coords.speed ? (position.coords.speed * 3.6).toFixed(1) : 0; // m/s a km/h
 
       const latLng = [lat, lng];
 
-      // Actualizar UI
-      document.getElementById("status").innerText = "Conectado";
+      // 1. Actualizar Interfaz Local
+      document.getElementById("status").innerText = "Transmitiendo";
       document.getElementById("status").style.color = "#00ff88";
       document.getElementById("accuracy").innerText = `±${Math.round(accuracy)}m`;
       document.getElementById("speed").innerText = `${speed} km/h`;
 
-      // Si es la primera coordenada, centramos el mapa con zoom cercano
+      // 2. Actualizar Marcadores en el Mapa del Repartidor
       if (!motoMarker) {
         motoMarker = L.marker(latLng, { icon: motoIcon }).addTo(map);
         accuracyCircle = L.circle(latLng, { radius: accuracy, color: '#007bff', opacity: 0.3 }).addTo(map);
         map.setView(latLng, 17);
       } else {
-        // Actualizamos posición de la moto y del círculo de precisión
         motoMarker.setLatLng(latLng);
         accuracyCircle.setLatLng(latLng);
         accuracyCircle.setRadius(accuracy);
-        
-        // Mantener la cámara centrada en la moto
         map.panTo(latLng);
+      }
+
+      // 3. EMITIR COORDENADAS AL SERVIDOR EN TIEMPO REAL
+      if (socket.connected) {
+        socket.emit('ubicacion_moto', {
+          motoId: "MOTO-01", // Identificador único de la moto/repartidor
+          lat: lat,
+          lng: lng,
+          speed: speed,
+          accuracy: accuracy,
+          timestamp: new Date().getTime()
+        });
       }
     }
 
@@ -196,13 +239,13 @@
       
       switch(error.code) {
         case error.PERMISSION_DENIED:
-          alert("Permiso de ubicación denegado por el usuario.");
+          alert("Permiso de ubicación denegado.");
           break;
         case error.POSITION_UNAVAILABLE:
-          alert("La información de ubicación no está disponible.");
+          alert("Ubicación no disponible.");
           break;
         case error.TIMEOUT:
-          alert("Se agotó el tiempo para obtener la ubicación.");
+          alert("Tiempo de espera del GPS agotado.");
           break;
       }
       stopGPS();
