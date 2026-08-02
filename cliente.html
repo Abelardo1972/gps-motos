@@ -3,8 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Cliente - Seguimiento de Estado</title>
+  <title>Cliente - Pedir Moto</title>
+
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, sans-serif; }
     body { display: flex; flex-direction: column; height: 100vh; background: #f4f6f8; }
@@ -18,12 +20,26 @@
 
     .badge-status {
       display: inline-block; padding: 6px 12px; border-radius: 20px;
-      font-size: 0.85rem; font-weight: bold; margin-bottom: 8px; text-transform: uppercase;
+      font-size: 0.8rem; font-weight: bold; margin-bottom: 8px; text-transform: uppercase;
     }
     .st-espera { background: #fff3cd; color: #856404; }
+    .st-buscando { background: #ffe8a1; color: #855c00; }
     .st-aceptado { background: #d4edda; color: #155724; }
     .st-recogido { background: #cce5ff; color: #004085; }
     .st-entregado { background: #d1ecf1; color: #0c5460; }
+
+    .price-container {
+      display: flex; justify-content: space-between; align-items: center;
+      background: #111; color: #fff; padding: 10px 14px; border-radius: 8px; margin: 10px 0;
+    }
+    .price-value { font-size: 1.3rem; font-weight: bold; color: #00ff88; }
+
+    .btn-confirm {
+      width: 100%; padding: 12px; background: #007bff; color: white;
+      border: none; border-radius: 8px; font-weight: bold; font-size: 1rem;
+      cursor: pointer; display: none; margin-top: 5px;
+    }
+    .btn-confirm:disabled { background: #ccc; cursor: not-allowed; }
 
     #map { flex: 1; width: 100%; }
   </style>
@@ -31,9 +47,18 @@
 <body>
 
   <div id="card-status">
-    <div id="badge" class="badge-status st-espera">Esperando Repartidor</div>
-    <h3 id="main-title">Tu pedido ha sido creado</h3>
-    <p id="sub-title" style="font-size: 0.85rem; color: #666; margin-top: 4px;">En cuanto un motorizado acepte el pedido, podrás seguir su trayectoria.</p>
+    <div id="badge" class="badge-status st-espera">Cotizador</div>
+    <div id="step-text" style="font-size: 0.85rem; color: #555;">📌 Haz clic en el mapa para fijar el <b>Origen (Punto A)</b>.</div>
+
+    <div class="price-container">
+      <div>
+        <div style="font-size: 0.7rem; color: #aaa;">TARIFA ESTIMADA</div>
+        <div id="price" class="price-value">$0.00</div>
+      </div>
+      <div id="distance-info" style="font-size: 0.8rem; text-align: right; color: #ccc;">0 km / 0 min</div>
+    </div>
+
+    <button id="btn-request" class="btn-confirm" onclick="solicitarPedido()">🛵 Solicitar Moto Ahora</button>
   </div>
 
   <div id="map"></div>
@@ -45,6 +70,10 @@
     const URL_SERVIDOR = "https://render-tw5p.onrender.com";
     const socket = io(URL_SERVIDOR);
 
+    const TARIFA_BASE = 1.50;
+    const PRECIO_KM = 0.50;
+    const PRECIO_MIN = 0.10;
+
     let map = L.map('map').setView([-17.7833, -63.1821], 14);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
 
@@ -53,42 +82,95 @@
       iconSize: [42, 42], iconAnchor: [21, 21]
     });
 
-    let motoMarker = null;
+    let puntoA = null, puntoB = null;
+    let markerA = null, markerB = null, motoMarker = null, routePolyline = null;
+    let datosUltimaRuta = null;
 
-    // --- ESCUCHAR CAMBIOS DE ESTADO DESDE EL REPARTIDOR ---
-    socket.on('estado_actualizado', (data) => {
-      const badge = document.getElementById('badge');
-      const title = document.getElementById('main-title');
-      const sub = document.getElementById('sub-title');
-
-      if (data.estado === 'ACEPTADO') {
-        badge.className = "badge-status st-aceptado";
-        badge.innerText = "Pedido Aceptado";
-        title.innerText = "El motorizado va en camino a la recogida";
-        sub.innerText = "Sigue su posición sobre el mapa en vivo.";
-      } else if (data.estado === 'RECOGIDO') {
-        badge.className = "badge-status st-recogido";
-        badge.innerText = "Paquete Recogido";
-        title.innerText = "El motorizado lleva tu paquete al destino";
-        sub.innerText = "En camino al punto de entrega.";
-      } else if (data.estado === 'ENTREGADO') {
-        badge.className = "badge-status st-entregado";
-        badge.innerText = "¡Pedido Entregado!";
-        title.innerText = "El paquete ha llegado a su destino";
-        sub.innerText = "Gracias por utilizar nuestro servicio.";
+    map.on('click', function(e) {
+      if (!puntoA) {
+        puntoA = e.latlng;
+        markerA = L.marker(puntoA).addTo(map).bindPopup("Origen").openPopup();
+        document.getElementById('step-text').innerHTML = "🏁 Selecciona el <b>Destino (Punto B)</b>.";
+      } else if (!puntoB) {
+        puntoB = e.latlng;
+        markerB = L.marker(puntoB).addTo(map).bindPopup("Destino").openPopup();
+        document.getElementById('step-text').innerHTML = "✅ Ruta calculada.";
+        calcularRuta();
       }
     });
 
-    // --- POSICIÓN EN TIEMPO REAL ---
+    async function calcularRuta() {
+      const url = `https://router.project-osrm.org/route/v1/driving/${puntoA.lng},${puntoA.lat};${puntoB.lng},${puntoB.lat}?overview=full&geometries=geojson`;
+
+      try {
+        const res = await fetch(url);
+        const data = await res.json();
+        if (data.routes && data.routes.length > 0) {
+          const route = data.routes[0];
+          const distKm = (route.distance / 1000).toFixed(2);
+          const tiempoMin = Math.round(route.duration / 60);
+          const total = (TARIFA_BASE + (distKm * PRECIO_KM) + (tiempoMin * PRECIO_MIN)).toFixed(2);
+
+          if (routePolyline) map.removeLayer(routePolyline);
+          const coords = route.geometry.coordinates.map(c => [c[1], c[0]]);
+          routePolyline = L.polyline(coords, { color: '#007bff', weight: 5 }).addTo(map);
+          map.fitBounds(routePolyline.getBounds(), { padding: [40, 40] });
+
+          document.getElementById('price').innerText = `$${total}`;
+          document.getElementById('distance-info').innerText = `${distKm} km / ~${tiempoMin} min`;
+          document.getElementById('btn-request').style.display = 'block';
+
+          datosUltimaRuta = { precio: `$${total}`, distancia: `${distKm} km (${tiempoMin} min)` };
+        }
+      } catch (err) { console.error(err); }
+    }
+
+    function solicitarPedido() {
+      const btn = document.getElementById('btn-request');
+      btn.disabled = true;
+      btn.innerText = "Buscando repartidor...";
+
+      const badge = document.getElementById('badge');
+      badge.className = "badge-status st-buscando";
+      badge.innerText = "Buscando Repartidor";
+
+      // Emitir evento al backend
+      socket.emit('solicitar_pedido', {
+        precio: datosUltimaRuta.precio,
+        distancia: datosUltimaRuta.distancia,
+        coordsOrigen: [puntoA.lat, puntoA.lng],
+        coordsDestino: [puntoB.lat, puntoB.lng]
+      });
+    }
+
+    // Cambios de estado recibidos del repartidor
+    socket.on('estado_actualizado', (data) => {
+      const badge = document.getElementById('badge');
+      const stepText = document.getElementById('step-text');
+      const btn = document.getElementById('btn-request');
+
+      if (data.estado === 'ACEPTADO') {
+        btn.style.display = 'none';
+        badge.className = "badge-status st-aceptado";
+        badge.innerText = "Pedido Aceptado";
+        stepText.innerText = "🛵 Motorizado en camino al punto de recogida.";
+      } else if (data.estado === 'RECOGIDO') {
+        badge.className = "badge-status st-recogido";
+        badge.innerText = "En Camino";
+        stepText.innerText = "📦 Paquete recogido, en camino al destino.";
+      } else if (data.estado === 'ENTREGADO') {
+        badge.className = "badge-status st-entregado";
+        badge.innerText = "Entregado";
+        stepText.innerText = "🎉 Pedido finalizado con éxito.";
+      }
+    });
+
     socket.on('actualizar_posicion_cliente', (data) => {
       const latLng = [data.lat, data.lng];
-
       if (!motoMarker) {
         motoMarker = L.marker(latLng, { icon: motoIcon }).addTo(map);
-        map.setView(latLng, 17);
       } else {
         motoMarker.setLatLng(latLng);
-        map.panTo(latLng);
       }
     });
   </script>
